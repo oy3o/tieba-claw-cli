@@ -9,7 +9,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var token string
+var (
+	token      string
+	jsonOutput bool
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "tiecli",
@@ -35,6 +38,12 @@ var listCmd = &cobra.Command{
 		res, err := client.ListThreads(0)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return
+		}
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			enc.Encode(res.Data.ThreadList)
 			return
 		}
 		for _, t := range res.Data.ThreadList {
@@ -66,37 +75,79 @@ var getCmd = &cobra.Command{
 
 		client := api.NewClient(token)
 
-		if !getAllPages {
-			// Single page
-			res, err := client.GetThreadDetails(tid, getPage)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		if jsonOutput {
+			if !getAllPages {
+				// Single page
+				res, err := client.GetThreadDetails(tid, getPage)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					return
+				}
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				enc.Encode(res)
 				return
 			}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			enc.Encode(res)
+
+			// Fetch all pages and stream as a JSON array
+			fmt.Print("[\n")
+			for pn := 1; ; pn++ {
+				res, err := client.GetThreadDetails(tid, pn)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error on page %d: %v\n", pn, err)
+					break
+				}
+				data, _ := json.MarshalIndent(res, "  ", "  ")
+				if pn > 1 {
+					fmt.Print(",\n")
+				}
+				fmt.Printf("  %s", data)
+				if res.Page.HasMore == 0 || pn >= res.Page.TotalPage {
+					break
+				}
+			}
+			fmt.Print("\n]\n")
 			return
 		}
 
-		// Fetch all pages and stream as a JSON array
-		fmt.Print("[\n")
-		for pn := 1; ; pn++ {
-			res, err := client.GetThreadDetails(tid, pn)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error on page %d: %v\n", pn, err)
-				break
-			}
-			data, _ := json.MarshalIndent(res, "  ", "  ")
-			if pn > 1 {
-				fmt.Print(",\n")
-			}
-			fmt.Printf("  %s", data)
-			if res.Page.HasMore == 0 || pn >= res.Page.TotalPage {
-				break
+		// Text mode (Human-readable)
+		res, err := client.GetThreadDetails(tid, getPage)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return
+		}
+
+		fmt.Printf("Title: %s\n", res.FirstFloor.Title)
+		fmt.Printf("Thread ID: %d\n", tid)
+		fmt.Println("---")
+		for _, c := range res.FirstFloor.Content {
+			if c.Type == 0 {
+				fmt.Println(c.Text)
 			}
 		}
-		fmt.Print("\n]\n")
+		fmt.Println("---")
+		for _, p := range res.PostList {
+			txt := ""
+			for _, c := range p.Content {
+				if c.Type == 0 {
+					txt += c.Text
+				}
+			}
+			fmt.Printf("[%d] %s\n", p.ID, txt)
+			for _, sp := range p.SubPostList.SubPostList {
+				stxt := ""
+				for _, c := range sp.Content {
+					if c.Type == 0 {
+						stxt += c.Text
+					}
+				}
+				fmt.Printf("  | [%d] %s\n", sp.ID, stxt)
+			}
+		}
+
+		if res.Page.HasMore == 1 {
+			fmt.Printf("\n(More pages available. Use --page %d to continue)\n", res.Page.CurrentPage+1)
+		}
 	},
 }
 
@@ -204,6 +255,12 @@ var inboxCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return
 		}
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			enc.Encode(res.Data.ReplyList)
+			return
+		}
 		for _, r := range res.Data.ReplyList {
 			status := " "
 			if r.Unread == 1 {
@@ -279,6 +336,12 @@ var subpostsCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return
 		}
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			enc.Encode(res.Data.PostList)
+			return
+		}
 		for _, p := range res.Data.PostList {
 			txt := ""
 			for _, c := range p.Content {
@@ -317,6 +380,7 @@ var initCmd = &cobra.Command{
 
 func Execute() {
 	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", "", "Baidu Tieba Token")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 
 	// post flags
 	postCmd.Flags().StringVar(&postTitle, "title", "", "Thread title (required)")

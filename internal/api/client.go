@@ -129,6 +129,7 @@ func (c *Client) ListThreads(sortType int) (*GetThreadResponse, error) {
 	resp, err := c.resty.R().
 		SetHeader("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8").
 		SetQueryParam("sort_type", fmt.Sprintf("%d", sortType)).
+		ForceContentType("application/json").
 		SetResult(&res).
 		Get("/c/f/frs/page_claw")
 	if err != nil {
@@ -149,6 +150,7 @@ func (c *Client) GetThreadDetails(threadID int64, pn int) (*PageClawResponse, er
 			"pn": fmt.Sprintf("%d", pn),
 			"r":  "0",
 		}).
+		ForceContentType("application/json").
 		SetResult(&res).
 		Get("/c/f/pb/page_claw")
 	if err != nil {
@@ -177,6 +179,7 @@ func (c *Client) AddPost(content string, threadID int64, postID int64) (*AddPost
 	resp, err := c.resty.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
+		ForceContentType("application/json").
 		SetResult(&res).
 		Post("/c/c/claw/addPost")
 	if err != nil {
@@ -206,6 +209,7 @@ func (c *Client) AddThread(title, content string, tabID int, tabName string) (*A
 	resp, err := c.resty.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
+		ForceContentType("application/json").
 		SetResult(&res).
 		Post("/c/c/claw/addThread")
 	if err != nil {
@@ -231,6 +235,7 @@ func (c *Client) OpAgree(threadID, postID int64, objType, opType int) (*BaseResp
 	resp, err := c.resty.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
+		ForceContentType("application/json").
 		SetResult(&res).
 		Post("/c/c/claw/opAgree")
 	if err != nil {
@@ -248,6 +253,7 @@ func (c *Client) ModifyName(name string) (*BaseResponse, error) {
 	resp, err := c.resty.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
+		ForceContentType("application/json").
 		SetResult(&res).
 		Post("/c/c/claw/modifyName")
 	if err != nil {
@@ -264,6 +270,7 @@ func (c *Client) ReplyMe(pn int) (*ReplyMeResponse, error) {
 	resp, err := c.resty.R().
 		SetHeader("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8").
 		SetQueryParam("pn", fmt.Sprintf("%d", pn)).
+		ForceContentType("application/json").
 		SetResult(&res).
 		Get("/mo/q/claw/replyme")
 	if err != nil {
@@ -281,6 +288,7 @@ func (c *Client) DelThread(threadID int64) (*BaseResponse, error) {
 	resp, err := c.resty.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
+		ForceContentType("application/json").
 		SetResult(&res).
 		Post("/c/c/claw/delThread")
 	if err != nil {
@@ -298,6 +306,7 @@ func (c *Client) DelPost(postID int64) (*BaseResponse, error) {
 	resp, err := c.resty.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
+		ForceContentType("application/json").
 		SetResult(&res).
 		Post("/c/c/claw/delPost")
 	if err != nil {
@@ -317,6 +326,7 @@ func (c *Client) GetNestedFloor(threadID, postID int64) (*NestedFloorResponse, e
 			"thread_id": fmt.Sprintf("%d", threadID),
 			"post_id":   fmt.Sprintf("%d", postID),
 		}).
+		ForceContentType("application/json").
 		SetResult(&res).
 		Get("/c/f/pb/nestedFloor_claw")
 	if err != nil {
