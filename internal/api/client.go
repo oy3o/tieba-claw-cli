@@ -2,9 +2,16 @@ package api
 
 import (
 	"fmt"
-	"github.com/go-resty/resty/v2"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 	"time"
+
+	"github.com/go-resty/resty/v2"
 )
+
+// ── Client ───────────────────────────────────────────────────────────────────
 
 type Client struct {
 	resty *resty.Client
@@ -16,21 +23,18 @@ func NewClient(token string) *Client {
 	c.SetBaseURL("https://tieba.baidu.com")
 	c.SetHeader("Authorization", token)
 	c.SetTimeout(10 * time.Second)
-
-	return &Client{
-		resty: c,
-		token: token,
-	}
+	return &Client{resty: c, token: token}
 }
 
-// Common response structures
+// ── Response types ────────────────────────────────────────────────────────────
+
 type BaseResponse struct {
 	ErrNo  int    `json:"errno"`
 	ErrMsg string `json:"errmsg"`
 }
 
 type GetThreadResponse struct {
-	ErrorCode int `json:"error_code"`
+	ErrorCode int    `json:"error_code"`
 	ErrorMsg  string `json:"error_msg"`
 	Data      struct {
 		ThreadList []Thread `json:"thread_list"`
@@ -38,17 +42,25 @@ type GetThreadResponse struct {
 }
 
 type Thread struct {
-	ID       int64  `json:"id"`
-	Title    string `json:"title"`
-	Author   struct {
+	ID     int64  `json:"id"`
+	Title  string `json:"title"`
+	Author struct {
 		Name string `json:"name"`
 	} `json:"author"`
 	ReplyNum int `json:"reply_num"`
 	AgreeNum int `json:"agree_num"`
 }
 
+// PageInfo carries the pagination metadata returned by page_claw.
+type PageInfo struct {
+	CurrentPage int `json:"current_page"`
+	TotalPage   int `json:"total_page"`
+	HasMore     int `json:"has_more"`
+}
+
 type PageClawResponse struct {
-	ErrorCode int `json:"error_code"`
+	ErrorCode  int      `json:"error_code"`
+	Page       PageInfo `json:"page"`
 	FirstFloor struct {
 		ID      int64  `json:"id"`
 		Title   string `json:"title"`
@@ -86,6 +98,15 @@ type ReplyMeResponse struct {
 	} `json:"data"`
 }
 
+// AddPostResponse carries both the status and the newly created IDs.
+type AddPostResponse struct {
+	BaseResponse
+	Data struct {
+		ThreadID int64 `json:"thread_id"`
+		PostID   int64 `json:"post_id"`
+	} `json:"data"`
+}
+
 type AddThreadResponse struct {
 	BaseResponse
 	Data struct {
@@ -101,7 +122,8 @@ type NestedFloorResponse struct {
 	} `json:"data"`
 }
 
-// ListThreads gets the forum page threads
+// ── API methods ───────────────────────────────────────────────────────────────
+
 func (c *Client) ListThreads(sortType int) (*GetThreadResponse, error) {
 	var res GetThreadResponse
 	resp, err := c.resty.R().
@@ -109,7 +131,6 @@ func (c *Client) ListThreads(sortType int) (*GetThreadResponse, error) {
 		SetQueryParam("sort_type", fmt.Sprintf("%d", sortType)).
 		SetResult(&res).
 		Get("/c/f/frs/page_claw")
-
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +140,6 @@ func (c *Client) ListThreads(sortType int) (*GetThreadResponse, error) {
 	return &res, nil
 }
 
-// GetThreadDetails gets the posts in a thread
 func (c *Client) GetThreadDetails(threadID int64, pn int) (*PageClawResponse, error) {
 	var res PageClawResponse
 	resp, err := c.resty.R().
@@ -131,7 +151,6 @@ func (c *Client) GetThreadDetails(threadID int64, pn int) (*PageClawResponse, er
 		}).
 		SetResult(&res).
 		Get("/c/f/pb/page_claw")
-
 	if err != nil {
 		return nil, err
 	}
@@ -141,8 +160,9 @@ func (c *Client) GetThreadDetails(threadID int64, pn int) (*PageClawResponse, er
 	return &res, nil
 }
 
-// AddPost replies to a thread or post
-func (c *Client) AddPost(content string, threadID int64, postID int64) (*BaseResponse, error) {
+// AddPost returns the full response including the new thread_id / post_id so
+// callers can construct the direct link to the reply.
+func (c *Client) AddPost(content string, threadID int64, postID int64) (*AddPostResponse, error) {
 	payload := map[string]interface{}{
 		"content": content,
 	}
@@ -153,23 +173,21 @@ func (c *Client) AddPost(content string, threadID int64, postID int64) (*BaseRes
 		payload["post_id"] = postID
 	}
 
-	var res struct {
-		BaseResponse
-		Data interface{} `json:"data"`
-	}
-	_, err := c.resty.R().
+	var res AddPostResponse
+	resp, err := c.resty.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
 		SetResult(&res).
 		Post("/c/c/claw/addPost")
-
 	if err != nil {
 		return nil, err
 	}
-	return &res.BaseResponse, nil
+	if !resp.IsSuccess() {
+		return nil, fmt.Errorf("http error: %s", resp.Status())
+	}
+	return &res, nil
 }
 
-// AddThread creates a new thread
 func (c *Client) AddThread(title, content string, tabID int, tabName string) (*AddThreadResponse, error) {
 	payload := map[string]interface{}{
 		"title": title,
@@ -190,7 +208,6 @@ func (c *Client) AddThread(title, content string, tabID int, tabName string) (*A
 		SetBody(payload).
 		SetResult(&res).
 		Post("/c/c/claw/addThread")
-
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +217,6 @@ func (c *Client) AddThread(title, content string, tabID int, tabName string) (*A
 	return &res, nil
 }
 
-// OpAgree likes/unlikes a thread or post
 func (c *Client) OpAgree(threadID, postID int64, objType, opType int) (*BaseResponse, error) {
 	payload := map[string]interface{}{
 		"thread_id": threadID,
@@ -217,7 +233,6 @@ func (c *Client) OpAgree(threadID, postID int64, objType, opType int) (*BaseResp
 		SetBody(payload).
 		SetResult(&res).
 		Post("/c/c/claw/opAgree")
-
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +242,6 @@ func (c *Client) OpAgree(threadID, postID int64, objType, opType int) (*BaseResp
 	return &res, nil
 }
 
-// ModifyName changes the user's nickname
 func (c *Client) ModifyName(name string) (*BaseResponse, error) {
 	payload := map[string]string{"name": name}
 	var res BaseResponse
@@ -236,7 +250,6 @@ func (c *Client) ModifyName(name string) (*BaseResponse, error) {
 		SetBody(payload).
 		SetResult(&res).
 		Post("/c/c/claw/modifyName")
-
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +259,6 @@ func (c *Client) ModifyName(name string) (*BaseResponse, error) {
 	return &res, nil
 }
 
-// ReplyMe fetches incoming replies
 func (c *Client) ReplyMe(pn int) (*ReplyMeResponse, error) {
 	var res ReplyMeResponse
 	resp, err := c.resty.R().
@@ -254,7 +266,6 @@ func (c *Client) ReplyMe(pn int) (*ReplyMeResponse, error) {
 		SetQueryParam("pn", fmt.Sprintf("%d", pn)).
 		SetResult(&res).
 		Get("/mo/q/claw/replyme")
-
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +275,6 @@ func (c *Client) ReplyMe(pn int) (*ReplyMeResponse, error) {
 	return &res, nil
 }
 
-// DelThread deletes a thread
 func (c *Client) DelThread(threadID int64) (*BaseResponse, error) {
 	payload := map[string]int64{"thread_id": threadID}
 	var res BaseResponse
@@ -273,7 +283,6 @@ func (c *Client) DelThread(threadID int64) (*BaseResponse, error) {
 		SetBody(payload).
 		SetResult(&res).
 		Post("/c/c/claw/delThread")
-
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +292,6 @@ func (c *Client) DelThread(threadID int64) (*BaseResponse, error) {
 	return &res, nil
 }
 
-// DelPost deletes a post/reply
 func (c *Client) DelPost(postID int64) (*BaseResponse, error) {
 	payload := map[string]int64{"post_id": postID}
 	var res BaseResponse
@@ -292,7 +300,6 @@ func (c *Client) DelPost(postID int64) (*BaseResponse, error) {
 		SetBody(payload).
 		SetResult(&res).
 		Post("/c/c/claw/delPost")
-
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +309,6 @@ func (c *Client) DelPost(postID int64) (*BaseResponse, error) {
 	return &res, nil
 }
 
-// GetNestedFloor gets replies to a specific post
 func (c *Client) GetNestedFloor(threadID, postID int64) (*NestedFloorResponse, error) {
 	var res NestedFloorResponse
 	resp, err := c.resty.R().
@@ -313,7 +319,6 @@ func (c *Client) GetNestedFloor(threadID, postID int64) (*NestedFloorResponse, e
 		}).
 		SetResult(&res).
 		Get("/c/f/pb/nestedFloor_claw")
-
 	if err != nil {
 		return nil, err
 	}
@@ -323,9 +328,35 @@ func (c *Client) GetNestedFloor(threadID, postID int64) (*NestedFloorResponse, e
 	return &res, nil
 }
 
-// DownloadFile downloads a file from URL to dest
-func (c *Client) DownloadFile(url, dest string) (*resty.Response, error) {
-	return c.resty.R().
-		SetOutput(dest).
-		Get(url)
+// ── DownloadPublicFile ────────────────────────────────────────────────────────
+// Uses the standard library's http.Client — no Authorization header — so
+// TB_TOKEN is never sent to CDN domains outside tieba.baidu.com.
+// The file is placed in ~/.openclaw/skills/tieba-claw/<name>.
+func DownloadPublicFile(url, name string) (string, error) {
+	dir := filepath.Join(os.Getenv("HOME"), ".openclaw", "skills", "tieba-claw")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("mkdir: %w", err)
+	}
+	dest := filepath.Join(dir, name)
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("server returned %s", resp.Status)
+	}
+
+	f, err := os.Create(dest)
+	if err != nil {
+		return "", fmt.Errorf("create file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		return "", fmt.Errorf("write file: %w", err)
+	}
+	return dest, nil
 }
